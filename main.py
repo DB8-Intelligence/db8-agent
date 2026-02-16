@@ -1,16 +1,15 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List
 from uuid import uuid4
 
 app = FastAPI(title="DB8 Intelligence Agent")
 
-# Banco temporário em memória
 items = []
 
 user_data = {
-    "user_plan": "pro",
-    "credits_remaining": 20
+    "user_plan": "credits",  # altere aqui para testar
+    "credits_remaining": 3
 }
 
 class Property(BaseModel):
@@ -26,7 +25,6 @@ def root():
 def health():
     return {"status": "healthy"}
 
-# 🔹 CRIAR IMÓVEL
 @app.post("/properties")
 def create_property(property: Property):
     new_item = {
@@ -39,28 +37,38 @@ def create_property(property: Property):
     items.append(new_item)
     return new_item
 
-# 🔹 LISTAR IMÓVEIS
 @app.get("/properties")
 def list_properties():
     return items
 
-# 🔹 ATUALIZAR STATUS DO IMÓVEL
 @app.patch("/properties/{property_id}")
 def update_property(property_id: str, status: str):
     for item in items:
         if item["id"] == property_id:
             item["status"] = status
             return item
-    return {"error": "Not found"}
+    raise HTTPException(status_code=404, detail="Not found")
 
-# 🔹 CONSULTAR USUÁRIO (CRÉDITOS)
+@app.post("/properties/{property_id}/publish")
+def publish_property(property_id: str):
+    global user_data
+
+    if user_data["user_plan"] == "credits":
+        if user_data["credits_remaining"] <= 0:
+            raise HTTPException(status_code=403, detail="Sem créditos disponíveis")
+
+        user_data["credits_remaining"] -= 1
+
+    for item in items:
+        if item["id"] == property_id:
+            item["status"] = "published"
+            return {
+                "message": "Publicado com sucesso",
+                "credits_remaining": user_data["credits_remaining"]
+            }
+
+    raise HTTPException(status_code=404, detail="Imóvel não encontrado")
+
 @app.get("/me")
 def get_user():
-    return user_data
-
-# 🔹 ATUALIZAR CRÉDITOS
-@app.patch("/me")
-def update_user(data: dict):
-    if "credits_remaining" in data:
-        user_data["credits_remaining"] = data["credits_remaining"]
     return user_data
