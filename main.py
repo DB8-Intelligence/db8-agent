@@ -63,3 +63,17 @@ def update_user(credits: Optional[int] = None):
     if credits is not None:
         user_data["credits_remaining"] = credits
     return user_data
+user_data = {
+    "plan": "starter",
+    "credits_remaining": 20
+}
+
+@app.get("/me")
+def get_user():
+    return user_data
+
+@app.patch("/me")
+def update_user(data: dict):
+    if "credits_remaining" in data:
+        user_data["credits_remaining"] = data["credits_remaining"]
+    return user_data
