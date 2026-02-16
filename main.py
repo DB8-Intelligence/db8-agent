@@ -1,12 +1,13 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 from uuid import uuid4
 
 app = FastAPI(title="DB8 Intelligence Agent")
 
 # Banco temporário em memória
 items = []
+
 user_data = {
     "user_plan": "pro",
     "credits_remaining": 20
@@ -58,20 +59,6 @@ def get_user():
     return user_data
 
 # 🔹 ATUALIZAR CRÉDITOS
-@app.patch("/me")
-def update_user(credits: Optional[int] = None):
-    if credits is not None:
-        user_data["credits_remaining"] = credits
-    return user_data
-user_data = {
-    "plan": "starter",
-    "credits_remaining": 20
-}
-
-@app.get("/me")
-def get_user():
-    return user_data
-
 @app.patch("/me")
 def update_user(data: dict):
     if "credits_remaining" in data:
