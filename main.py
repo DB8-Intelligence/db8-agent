@@ -3,20 +3,29 @@ from pydantic import BaseModel
 from typing import List, Optional
 from uuid import uuid4
 
+# 🚀 APP PRIMEIRO
 app = FastAPI(title="DB8 Intelligence Agent")
 
+# =========================
 # Banco temporário em memória
+# =========================
 items = []
-
 user_data = {
-    "user_plan": "pro",
+    "user_plan": "credits",
     "credits_remaining": 20
 }
 
+# =========================
+# MODELS
+# =========================
 class Property(BaseModel):
     title: str
     description: str
     images: List[str]
+
+# =========================
+# ROTAS
+# =========================
 
 @app.get("/")
 def root():
@@ -26,7 +35,7 @@ def root():
 def health():
     return {"status": "healthy"}
 
-# Criar imóvel
+# 🔹 CRIAR IMÓVEL
 @app.post("/properties")
 def create_property(property: Property):
     new_item = {
@@ -39,12 +48,12 @@ def create_property(property: Property):
     items.append(new_item)
     return new_item
 
-# Listar imóveis
+# 🔹 LISTAR IMÓVEIS
 @app.get("/properties")
 def list_properties():
     return items
 
-# Atualizar status
+# 🔹 ATUALIZAR STATUS DO IMÓVEL
 @app.patch("/properties/{property_id}")
 def update_property(property_id: str, status: str = Query(...)):
     for item in items:
@@ -53,12 +62,24 @@ def update_property(property_id: str, status: str = Query(...)):
             return item
     return {"error": "Not found"}
 
-# Consultar usuário
+# 🔹 PUBLICAR IMÓVEL
+@app.post("/properties/{property_id}/publish")
+def publish_property(property_id: str):
+    for item in items:
+        if item["id"] == property_id:
+            item["status"] = "published"
+            return {
+                "message": "Property published successfully",
+                "property": item
+            }
+    return {"error": "Not found"}
+
+# 🔹 CONSULTAR USUÁRIO
 @app.get("/me")
 def get_user():
     return user_data
 
-# Atualizar créditos
+# 🔹 ATUALIZAR CRÉDITOS
 @app.patch("/me")
 def update_user(credits_remaining: Optional[int] = None):
     if credits_remaining is not None:
