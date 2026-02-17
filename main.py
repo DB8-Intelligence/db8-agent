@@ -25,7 +25,7 @@ class Property(BaseModel):
     city: str
     neighborhood: str
     investment_value: str
-    size_m2: str
+    size_m2: float
     description: str
     images: List[str]
 
