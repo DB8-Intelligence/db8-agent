@@ -1,25 +1,27 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
+from supabase import create_client
+import os
 from uuid import uuid4
 
 app = FastAPI(title="DB8 Intelligence Agent")
 
-# ============================
-# BANCO TEMPORÁRIO EM MEMÓRIA
-# ============================
+# -----------------------------
+# SUPABASE CONFIG
+# -----------------------------
 
-properties_db = []
-user_data = {
-    "user_plan": "credits",  # "pro" ou "credits"
-    "credits_remaining": 20
-}
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE")
 
-# ============================
-# MODELOS
-# ============================
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-class Property(BaseModel):
+# -----------------------------
+# MODELS
+# -----------------------------
+
+class PropertyCreate(BaseModel):
+    user_id: str
     property_type: str
     standard: str
     city: str
@@ -29,92 +31,102 @@ class Property(BaseModel):
     description: str
     images: List[str]
 
-class UpdateCredits(BaseModel):
-    credits_remaining: int
+class UpdateStatus(BaseModel):
+    status: str
 
-
-# ============================
-# ROTAS BÁSICAS
-# ============================
-
-@app.get("/")
-def root():
-    return {"status": "DB8 Agent Online 🚀"}
+# -----------------------------
+# HEALTH
+# -----------------------------
 
 @app.get("/health")
 def health():
     return {"status": "healthy"}
 
+# -----------------------------
+# GET USER
+# -----------------------------
 
-# ============================
-# PROPERTIES
-# ============================
+@app.get("/me/{user_id}")
+def get_user(user_id: str):
+    response = supabase.table("users").select("*").eq("id", user_id).execute()
+    if not response.data:
+        raise HTTPException(status_code=404, detail="User not found")
+    return response.data[0]
+
+# -----------------------------
+# CREATE PROPERTY
+# -----------------------------
 
 @app.post("/properties")
-def create_property(property: Property):
-    new_property = {
-        "id": str(uuid4()),
-        **property.dict(),
-        "status": "pending"
-    }
-    properties_db.append(new_property)
-    return new_property
+def create_property(property: PropertyCreate):
+    data = property.dict()
+    data["id"] = str(uuid4())
+    data["status"] = "pending"
 
+    response = supabase.table("properties").insert(data).execute()
+    return response.data
 
-@app.get("/properties")
-def list_properties():
-    return properties_db
+# -----------------------------
+# LIST PROPERTIES BY USER
+# -----------------------------
 
+@app.get("/properties/{user_id}")
+def list_properties(user_id: str):
+    response = supabase.table("properties").select("*").eq("user_id", user_id).execute()
+    return response.data
+
+# -----------------------------
+# UPDATE PROPERTY STATUS
+# -----------------------------
 
 @app.patch("/properties/{property_id}")
-def update_property(
-    property_id: str,
-    status: Optional[str] = Query(None)
-):
-    for property in properties_db:
-        if property["id"] == property_id:
-            if status:
-                property["status"] = status
-            return property
+def update_property(property_id: str, body: UpdateStatus):
+    response = supabase.table("properties") \
+        .update({"status": body.status}) \
+        .eq("id", property_id) \
+        .execute()
 
-    raise HTTPException(status_code=404, detail="Property not found")
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Property not found")
 
+    return response.data[0]
+
+# -----------------------------
+# PUBLISH PROPERTY (COM CRÉDITO)
+# -----------------------------
 
 @app.post("/properties/{property_id}/publish")
 def publish_property(property_id: str):
-    for property in properties_db:
-        if property["id"] == property_id:
 
-            # Se for plano credits, validar saldo
-            if user_data["user_plan"] == "credits":
-                if user_data["credits_remaining"] <= 0:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="No credits remaining"
-                    )
-                user_data["credits_remaining"] -= 1
+    # Buscar imóvel
+    property_response = supabase.table("properties").select("*").eq("id", property_id).execute()
+    if not property_response.data:
+        raise HTTPException(status_code=404, detail="Property not found")
 
-            property["status"] = "published"
+    property_data = property_response.data[0]
+    user_id = property_data["user_id"]
 
-            return {
-                "message": "Property published successfully",
-                "property": property,
-                "credits_remaining": user_data["credits_remaining"]
-            }
+    # Buscar usuário
+    user_response = supabase.table("users").select("*").eq("id", user_id).execute()
+    if not user_response.data:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    raise HTTPException(status_code=404, detail="Property not found")
+    user = user_response.data[0]
 
+    # Validar créditos
+    if user["user_plan"] == "credits":
+        if user["credits_remaining"] <= 0:
+            raise HTTPException(status_code=403, detail="No credits remaining")
 
-# ============================
-# USER / PLAN / CREDITS
-# ============================
+        supabase.table("users") \
+            .update({"credits_remaining": user["credits_remaining"] - 1}) \
+            .eq("id", user_id) \
+            .execute()
 
-@app.get("/me")
-def get_user():
-    return user_data
+    # Atualizar status
+    supabase.table("properties") \
+        .update({"status": "published"}) \
+        .eq("id", property_id) \
+        .execute()
 
-
-@app.patch("/me")
-def update_user(data: UpdateCredits):
-    user_data["credits_remaining"] = data.credits_remaining
-    return user_data
+    return {"message": "Property published successfully"}
