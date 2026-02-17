@@ -1,21 +1,23 @@
-import os
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import uuid4
-from openai import OpenAI
 
 app = FastAPI(title="DB8 Intelligence Agent")
 
-# Cliente OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# ============================
+# BANCO TEMPORÁRIO EM MEMÓRIA
+# ============================
 
-# Banco temporário
-items = []
+properties_db = []
 user_data = {
-    "user_plan": "credits",
+    "user_plan": "credits",  # "pro" ou "credits"
     "credits_remaining": 20
 }
+
+# ============================
+# MODELOS
+# ============================
 
 class Property(BaseModel):
     property_type: str
@@ -24,97 +26,95 @@ class Property(BaseModel):
     neighborhood: str
     investment_value: str
     size_m2: str
-    description: Optional[str] = ""
+    description: str
     images: List[str]
 
-def generate_caption(property: Property):
-    prompt = f"""
-Você é especialista em marketing imobiliário brasileiro.
+class UpdateCredits(BaseModel):
+    credits_remaining: int
 
-Crie um post para Instagram com:
-Título chamativo
-Descrição persuasiva
-CTA
-Hashtags
 
-Dados:
-Tipo: {property.property_type}
-Padrão: {property.standard}
-Cidade: {property.city}
-Bairro: {property.neighborhood}
-Valor: {property.investment_value}
-Tamanho: {property.size_m2} m2
-Descrição adicional: {property.description}
+# ============================
+# ROTAS BÁSICAS
+# ============================
 
-Formato:
-TÍTULO:
-DESCRIÇÃO:
-CTA:
-HASHTAGS:
-"""
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-    )
-
-    return response.choices[0].message.content
+@app.get("/")
+def root():
+    return {"status": "DB8 Agent Online 🚀"}
 
 @app.get("/health")
 def health():
     return {"status": "healthy"}
 
+
+# ============================
+# PROPERTIES
+# ============================
+
 @app.post("/properties")
 def create_property(property: Property):
-    caption = generate_caption(property)
-
-    new_item = {
+    new_property = {
         "id": str(uuid4()),
-        "property_type": property.property_type,
-        "standard": property.standard,
-        "city": property.city,
-        "neighborhood": property.neighborhood,
-        "investment_value": property.investment_value,
-        "size_m2": property.size_m2,
-        "images": property.images,
-        "ai_caption": caption,
+        **property.dict(),
         "status": "pending"
     }
+    properties_db.append(new_property)
+    return new_property
 
-    items.append(new_item)
-    return new_item
 
 @app.get("/properties")
 def list_properties():
-    return items
+    return properties_db
+
 
 @app.patch("/properties/{property_id}")
-def update_property(property_id: str, status: str = Query(...)):
-    for item in items:
-        if item["id"] == property_id:
-            item["status"] = status
-            return item
-    return {"error": "Not found"}
+def update_property(
+    property_id: str,
+    status: Optional[str] = Query(None)
+):
+    for property in properties_db:
+        if property["id"] == property_id:
+            if status:
+                property["status"] = status
+            return property
+
+    raise HTTPException(status_code=404, detail="Property not found")
+
+
+@app.post("/properties/{property_id}/publish")
+def publish_property(property_id: str):
+    for property in properties_db:
+        if property["id"] == property_id:
+
+            # Se for plano credits, validar saldo
+            if user_data["user_plan"] == "credits":
+                if user_data["credits_remaining"] <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No credits remaining"
+                    )
+                user_data["credits_remaining"] -= 1
+
+            property["status"] = "published"
+
+            return {
+                "message": "Property published successfully",
+                "property": property,
+                "credits_remaining": user_data["credits_remaining"]
+            }
+
+    raise HTTPException(status_code=404, detail="Property not found")
+
+
+# ============================
+# USER / PLAN / CREDITS
+# ============================
 
 @app.get("/me")
 def get_user():
     return user_data
 
-@app.post("/properties/{property_id}/publish")
-def publish_property(property_id: str):
-    if user_data["user_plan"] == "credits":
-        if user_data["credits_remaining"] <= 0:
-            return {"error": "Sem créditos disponíveis"}
 
-        user_data["credits_remaining"] -= 1
-
-    for item in items:
-        if item["id"] == property_id:
-            item["status"] = "published"
-            return {
-                "message": "Publicado com sucesso",
-                "credits_remaining": user_data["credits_remaining"]
-            }
-
-    return {"error": "Imóvel não encontrado"}
+@app.patch("/me")
+def update_user(data: UpdateCredits):
+    user_data["credits_remaining"] = data.credits_remaining
+    return user_data
