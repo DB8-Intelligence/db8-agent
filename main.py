@@ -17,14 +17,14 @@ user_data = {
     "credits_remaining": 20
 }
 
-cclass Property(BaseModel):
+class Property(BaseModel):
     property_type: str
     standard: str
     city: str
     neighborhood: str
     investment_value: str
     size_m2: str
-    description: str
+    description: Optional[str] = ""
     images: List[str]
 
 def generate_caption(property: Property):
