@@ -1,4 +1,5 @@
-Python 3.11 + FastAPI 0.110 + Pydantic 2.6
+python-3.11.8
+
 
 
 
