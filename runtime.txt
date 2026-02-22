@@ -1,3 +1,4 @@
-Fix runtime to Python 3.11
+Python 3.11 + FastAPI 0.110 + Pydantic 2.6
+
 
 
