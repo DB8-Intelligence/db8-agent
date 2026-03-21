@@ -160,16 +160,13 @@ def create_property(payload: PropertyCreate):
 def update_property(
     property_id: str,
     status: Optional[str] = Query(None),
-    payload: PropertyUpdate = PropertyUpdate(),
 ):
+    """Update property status via query param: PATCH /properties/{id}?status=approved"""
     sb = get_supabase()
+    if not status:
+        raise HTTPException(status_code=400, detail="status query param is required")
     try:
-        patch: Dict[str, Any] = {k: v for k, v in payload.model_dump().items() if v is not None}
-        if status:
-            patch["status"] = status
-        if not patch:
-            raise HTTPException(status_code=400, detail="No fields to update")
-        res = sb.table(TABLE_PROPERTIES).update(patch).eq("id", property_id).execute()
+        res = sb.table(TABLE_PROPERTIES).update({"status": status}).eq("id", property_id).execute()
         if not res.data:
             raise HTTPException(status_code=404, detail="Property not found")
         return res.data[0]
