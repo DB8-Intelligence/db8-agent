@@ -1,110 +1,198 @@
 import os
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="DB8 Intelligence Agent")
+app = FastAPI(title="DB8 Agent", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE") or os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
+
+_supabase: Optional[Client] = (
+    create_client(SUPABASE_URL, SUPABASE_KEY)
+    if SUPABASE_URL and SUPABASE_KEY
+    else None
+)
+
+TABLE_PROPERTIES = "properties"
+
 
 def get_supabase() -> Client:
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        raise HTTPException(status_code=500, detail="Supabase not configured")
-    return create_client(url, key)
+    if _supabase is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Supabase não configurado. Verifique SUPABASE_URL e SUPABASE_SERVICE_ROLE no Railway.",
+        )
+    return _supabase
 
 
 def get_openai() -> OpenAI:
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="OpenAI not configured")
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY não configurado no Railway.")
     return OpenAI(api_key=api_key)
+
+
+def _sb_error(e: Exception) -> HTTPException:
+    return HTTPException(status_code=500, detail=f"Supabase error: {str(e)}")
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
-    return {"status": "DB8 Agent Online 🚀"}
+    return {"status": "DB8 Agent Online 🚀", "version": "0.3.0"}
 
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    ok = _supabase is not None
+    return {
+        "status": "healthy" if ok else "degraded",
+        "supabase_configured": ok,
+        "supabase_url_present": bool(SUPABASE_URL),
+        "supabase_key_present": bool(SUPABASE_KEY),
+    }
 
 
 # ── Properties ───────────────────────────────────────────────────────────────
 
 class PropertyCreate(BaseModel):
-    title: str
+    title: Optional[str] = None
     description: Optional[str] = None
     price: Optional[str] = None
     city: Optional[str] = None
     neighborhood: Optional[str] = None
     property_type: Optional[str] = None
     property_standard: Optional[str] = None
+    standard: Optional[str] = None
+    investment_value: Optional[float] = None
     built_area_m2: Optional[float] = None
+    size_m2: Optional[float] = None
     highlights: Optional[str] = None
     cover_url: Optional[str] = None
+    images: List[str] = Field(default_factory=list)
     workspace_id: Optional[str] = None
+    user_id: Optional[str] = None
     source: Optional[str] = "manual"
 
 
+class PropertyUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[str] = None
+    property_type: Optional[str] = None
+    standard: Optional[str] = None
+    city: Optional[str] = None
+    neighborhood: Optional[str] = None
+    investment_value: Optional[float] = None
+    size_m2: Optional[float] = None
+    images: Optional[List[str]] = None
+    status: Optional[str] = None
+
+
 @app.get("/properties")
-def list_properties(workspace_id: Optional[str] = Query(None)):
-    supabase = get_supabase()
-    query = supabase.table("properties").select("*").order("created_at", desc=True)
-    if workspace_id:
-        query = query.eq("workspace_id", workspace_id)
-    result = query.execute()
-    return result.data
+def list_properties(
+    status: Optional[str] = Query(None),
+    user_id: Optional[str] = Query(None),
+    workspace_id: Optional[str] = Query(None),
+):
+    sb = get_supabase()
+    try:
+        q = sb.table(TABLE_PROPERTIES).select("*").order("created_at", desc=True)
+        if status:
+            q = q.eq("status", status)
+        if user_id:
+            q = q.eq("user_id", user_id)
+        if workspace_id:
+            q = q.eq("workspace_id", workspace_id)
+        return q.execute().data or []
+    except Exception as e:
+        raise _sb_error(e)
+
+
+@app.get("/properties/{property_id}")
+def get_property(property_id: str):
+    sb = get_supabase()
+    try:
+        res = sb.table(TABLE_PROPERTIES).select("*").eq("id", property_id).single().execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Property not found")
+        return res.data
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _sb_error(e)
 
 
 @app.post("/properties")
 def create_property(payload: PropertyCreate):
-    supabase = get_supabase()
-    data = payload.model_dump(exclude_none=True)
-    data.setdefault("status", "new")
-    result = supabase.table("properties").insert(data).execute()
-    if not result.data:
-        raise HTTPException(status_code=500, detail="Failed to create property")
-    return result.data[0]
+    sb = get_supabase()
+    try:
+        data: Dict[str, Any] = {k: v for k, v in payload.model_dump().items() if v is not None and v != []}
+        data.setdefault("status", "new")
+        res = sb.table(TABLE_PROPERTIES).insert(data).execute()
+        if not res.data:
+            raise HTTPException(status_code=500, detail="Failed to create property")
+        return res.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _sb_error(e)
 
 
 @app.patch("/properties/{property_id}")
-def update_property_status(
+def update_property(
     property_id: str,
+    payload: Optional[PropertyUpdate] = None,
     status: Optional[str] = Query(None),
 ):
-    supabase = get_supabase()
-    if not status:
-        raise HTTPException(status_code=400, detail="status query param is required")
-    valid_statuses = {"new", "in_review", "approved", "rejected", "published"}
-    if status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
-    result = (
-        supabase.table("properties")
-        .update({"status": status})
-        .eq("id", property_id)
-        .execute()
-    )
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Property not found")
-    return result.data[0]
+    sb = get_supabase()
+    try:
+        patch: Dict[str, Any] = {}
+        if payload:
+            patch = {k: v for k, v in payload.model_dump().items() if v is not None}
+        if status:
+            patch["status"] = status
+        if not patch:
+            raise HTTPException(status_code=400, detail="No fields to update")
+        res = sb.table(TABLE_PROPERTIES).update(patch).eq("id", property_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Property not found")
+        return res.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _sb_error(e)
+
+
+@app.delete("/properties/{property_id}")
+def delete_property(property_id: str):
+    sb = get_supabase()
+    try:
+        res = sb.table(TABLE_PROPERTIES).delete().eq("id", property_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Property not found")
+        return {"deleted": True, "property": res.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _sb_error(e)
 
 
 # ── Generate Caption ──────────────────────────────────────────────────────────
