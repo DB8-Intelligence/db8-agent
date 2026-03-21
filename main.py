@@ -1,11 +1,11 @@
 import os
+import requests as http_requests
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
-from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -41,11 +41,19 @@ def get_supabase() -> Client:
     return _supabase
 
 
-def get_openai() -> OpenAI:
+def _openai_chat(messages: list, max_tokens: int = 500) -> str:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY não configurado no Railway.")
-    return OpenAI(api_key=api_key)
+    resp = http_requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"model": "gpt-4o-mini", "messages": messages, "max_tokens": max_tokens, "temperature": 0.8},
+        timeout=30,
+    )
+    if not resp.ok:
+        raise HTTPException(status_code=502, detail=f"OpenAI error: {resp.text[:200]}")
+    return resp.json()["choices"][0]["message"]["content"].strip()
 
 
 def _sb_error(e: Exception) -> HTTPException:
@@ -211,62 +219,35 @@ class CaptionRequest(BaseModel):
 
 @app.post("/generate-caption")
 async def generate_caption(payload: CaptionRequest):
-    client = get_openai()
-
     parts = []
-    if payload.title:
-        parts.append(f"Título: {payload.title}")
-    if payload.property_type:
-        parts.append(f"Tipo: {payload.property_type}")
-    if payload.property_standard:
-        parts.append(f"Padrão: {payload.property_standard}")
+    if payload.title:         parts.append(f"Título: {payload.title}")
+    if payload.property_type: parts.append(f"Tipo: {payload.property_type}")
+    if payload.property_standard: parts.append(f"Padrão: {payload.property_standard}")
     if payload.city or payload.neighborhood:
-        location = ", ".join(filter(None, [payload.neighborhood, payload.city]))
-        parts.append(f"Localização: {location}")
+        parts.append(f"Localização: {', '.join(filter(None, [payload.neighborhood, payload.city]))}")
     if payload.price or payload.investment_value:
         parts.append(f"Valor: {payload.price or payload.investment_value}")
-    if payload.built_area_m2:
-        parts.append(f"Área: {payload.built_area_m2}m²")
-    if payload.highlights:
-        parts.append(f"Destaques: {payload.highlights}")
+    if payload.built_area_m2: parts.append(f"Área: {payload.built_area_m2}m²")
+    if payload.highlights:    parts.append(f"Destaques: {payload.highlights}")
 
     property_info = "\n".join(parts) if parts else "Imóvel disponível"
+    post_label = {"feed": "post feed Instagram", "story": "story Instagram",
+                  "carousel": "carrossel Instagram", "reels": "legenda para Reels"
+                  }.get(payload.type or "feed", "post Instagram")
 
-    post_type_label = {
-        "feed": "post feed Instagram",
-        "story": "story Instagram",
-        "carousel": "carrossel Instagram",
-        "reels": "legenda para Reels",
-    }.get(payload.type or "feed", "post Instagram")
+    user_prompt = f"Crie uma legenda para {post_label}:\n\n{property_info}"
+    if payload.custom_prompt: user_prompt += f"\n\nInstruções: {payload.custom_prompt}"
+    if payload.ai_prompt:     user_prompt += f"\n\nEstilo: {payload.ai_prompt}"
+    if payload.cta:           user_prompt += f"\n\nCTA: {payload.cta}"
 
-    system_prompt = (
-        "Você é um especialista em marketing imobiliário brasileiro. "
-        "Crie legendas envolventes, com emojis estratégicos e hashtags relevantes. "
-        "Use linguagem profissional mas acessível. Máximo 300 palavras."
-    )
-
-    user_prompt = f"Crie uma legenda para {post_type_label} com base nestas informações:\n\n{property_info}"
-    if payload.custom_prompt:
-        user_prompt += f"\n\nInstruções adicionais:\n{payload.custom_prompt}"
-    if payload.ai_prompt:
-        user_prompt += f"\n\nEstilo solicitado: {payload.ai_prompt}"
-    if payload.cta:
-        user_prompt += f"\n\nInclua este CTA no final: {payload.cta}"
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_tokens=500,
-            temperature=0.8,
-        )
-        caption = response.choices[0].message.content.strip()
-        return {"caption": caption, "type": payload.type}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Caption generation failed: {str(e)}")
+    caption = _openai_chat([
+        {"role": "system", "content": (
+            "Você é especialista em marketing imobiliário brasileiro. "
+            "Crie legendas envolventes com emojis e hashtags. Máximo 300 palavras."
+        )},
+        {"role": "user", "content": user_prompt},
+    ])
+    return {"caption": caption, "type": payload.type}
 
 
 # ── WhatsApp / N8N webhook ────────────────────────────────────────────────────
