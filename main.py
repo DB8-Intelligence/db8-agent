@@ -159,14 +159,12 @@ def create_property(payload: PropertyCreate):
 @app.patch("/properties/{property_id}")
 def update_property(
     property_id: str,
-    payload: Optional[PropertyUpdate] = None,
     status: Optional[str] = Query(None),
+    payload: PropertyUpdate = PropertyUpdate(),
 ):
     sb = get_supabase()
     try:
-        patch: Dict[str, Any] = {}
-        if payload:
-            patch = {k: v for k, v in payload.model_dump().items() if v is not None}
+        patch: Dict[str, Any] = {k: v for k, v in payload.model_dump().items() if v is not None}
         if status:
             patch["status"] = status
         if not patch:
