@@ -532,7 +532,12 @@ async def _fetch_trending_curiosidades() -> List[dict]:
     async with httpx.AsyncClient(timeout=10.0) as client:
         # Wikipedia Featured Content
         try:
-            r = await client.get("https://pt.wikipedia.org/api/rest_v1/feed/featured/2026/04/06")
+            from datetime import datetime
+            today = datetime.now()
+            r = await client.get(
+                f"https://pt.wikipedia.org/api/rest_v1/feed/featured"
+                f"/{today.year}/{today.month:02d}/{today.day:02d}"
+            )
             if r.status_code == 200:
                 tfa = r.json().get("tfa", {})
                 if tfa:
