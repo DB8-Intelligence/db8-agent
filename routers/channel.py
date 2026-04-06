@@ -185,9 +185,15 @@ async def generate_voice(body: VoiceRequest, service: str = Depends(require_serv
 
     return {
         "status": "ok",
-        "audio_url": "",
         "audio_b64": audio_b64,
+        "audio_url": "",
         "duration_seconds": max(1, duration_estimate),
+        "_pipeline_note": (
+            "audio_url está vazio. O n8n deve: "
+            "1) decodificar audio_b64, "
+            "2) fazer upload para Supabase Storage bucket 'channel-audio', "
+            "3) usar a URL pública resultante como audio_url no próximo step /channel/generate-video"
+        ),
     }
 
 
