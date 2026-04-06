@@ -67,3 +67,44 @@ Para novo produto XYZ:
 Push para main → Railway faz deploy automático.
 Verificar logs no Railway dashboard após cada push.
 URL de health check: https://api.db8intelligence.com.br/health
+
+## FLUXO PIPELINE CHANNELOS (n8n)
+O pipeline de produção de vídeo do ChannelOS segue esta sequência obrigatória:
+
+```
+STEP 1: POST /channel/fetch-trending
+→ retorna: topics[]
+
+STEP 2: POST /channel/generate-script
+→ input:  topic, niche, language, source_content (do step 1)
+→ retorna: script, scene_descriptions, thumbnail_prompt, title, tags
+
+STEP 3: POST /channel/generate-voice
+→ input:  script (do step 2), voice_id, niche
+→ retorna: audio_b64, duration_seconds
+→ n8n:    decodificar audio_b64 → upload Supabase Storage bucket "channel-audio" → obter audio_url pública
+
+STEP 4: POST /channel/generate-video
+→ input:  audio_url (do step 3 após upload), scene_descriptions (do step 2), niche
+→ retorna: StreamingResponse MP4
+→ n8n:    salvar MP4 → upload Supabase Storage bucket "channel-videos" → obter video_url pública
+
+STEP 5: POST /channel/generate-thumbnail
+→ input:  thumbnail_prompt (do step 2), title, niche
+→ retorna: thumbnail_url (Fal.ai CDN — URL pública direta)
+
+STEP 6: POST /channel/generate-shorts
+→ input:  video_url (do step 4 após upload), script (do step 2)
+→ retorna: shorts[]{video_b64, hook}
+→ n8n:    para cada short: upload Supabase Storage bucket "channel-shorts"
+```
+
+### Buckets Supabase necessários (criar antes de usar o pipeline)
+- `channel-audio`   → áudios MP3 gerados pelo ElevenLabs
+- `channel-videos`  → vídeos MP4 finais
+- `channel-shorts`  → shorts 9:16 recortados
+- `channel-thumbs`  → thumbnails (opcional — Fal.ai já entrega URL pública)
+
+### Headers obrigatórios nos endpoints /channel/*
+Todos os endpoints /channel/* exigem o header:
+`X-Service-Key: <valor de SERVICE_KEY_CHANNEL configurado no Railway>`
